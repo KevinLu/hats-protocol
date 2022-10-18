@@ -53,11 +53,17 @@ contract CreateTopHatTest is TestSetup {
 }
 
 contract CreateHatsTest is TestSetup {
+    function testCannotBuildTooBigHatId() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(HatsIdUtilities.MaxLevelsReached.selector)
+        );
+        hats.buildHatId(type(uint256).max - 1, 255);
+    }
+
     function testHatCreated() public {
         // get prelim values
         (, , , , , , uint8 lastHatId, ) = hats.viewHat(topHatId);
 
-        topHatId = hats.mintTopHat(topHatWearer, topHatImageURI);
         vm.prank(address(topHatWearer));
         hats.createHat(
             topHatId,
@@ -73,10 +79,22 @@ contract CreateHatsTest is TestSetup {
         assertEq(++lastHatId, lastHatIdPost);
     }
 
-    function testHatsBranchCreated() public {
-        // mint TopHat
-        topHatId = hats.mintTopHat(topHatWearer, topHatImageURI);
+    function testCannotCreateTooManyChildHats() public {
+        testBatchCreateHatsSameAdmin(255);
 
+        vm.prank(address(topHatWearer));
+        vm.expectRevert();
+        hats.createHat(
+            topHatId,
+            _details,
+            _maxSupply,
+            _eligibility,
+            _toggle,
+            secondHatImageURI
+        );
+    }
+
+    function testHatsBranchCreated() public {
         (uint256[] memory ids, address[] memory wearers) = createHatsBranch(
             3,
             topHatId,
@@ -87,9 +105,7 @@ contract CreateHatsTest is TestSetup {
         assertEq(hats.getAdminAtLevel(ids[1], 1), ids[0]);
         assertEq(hats.getAdminAtLevel(ids[2], 2), ids[1]);
     }
-}
 
-contract BatchCreateHats is TestSetupBatch {
     function testBatchCreateTwoHats() public {
         testBatchCreateHatsSameAdmin(2);
     }
@@ -139,12 +155,6 @@ contract BatchCreateHats is TestSetupBatch {
             hats.buildHatId(topHatId, uint8(count))
         );
         assertEq(t, _toggle);
-    }
-
-    function testTemp() public {
-        hats.getHatLevel(
-            27065671948198289362489238675596178244906309694785829628088330289409
-        );
     }
 
     function testBatchCreateHatsSkinnyFullBranch() public {
@@ -728,6 +738,32 @@ contract TransferHatTests is TestSetup2 {
         hats.transferHat(secondHatId, secondWearer, thirdWearer);
     }
 
+    function testCannotTransferHatToExistingWearer() public {
+        // mint second hat
+        vm.prank(address(topHatWearer));
+        hats.mintHat(secondHatId, thirdWearer);
+
+        vm.prank(address(topHatWearer));
+
+        // expect OnlyAdminsCanTransfer error
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Hats.AlreadyWearingHat.selector,
+                thirdWearer,
+                secondHatId
+            )
+        );
+
+        hats.transferHat(secondHatId, secondWearer, thirdWearer);
+    }
+
+    function testCannotTransferHatFromNonWearer() public {
+        vm.expectRevert(abi.encodeWithSelector(Hats.NotHatWearer.selector));
+
+        vm.prank(address(topHatWearer));
+        hats.transferHat(secondHatId, thirdWearer, nonWearer);
+    }
+
     function testTransferHat() public {
         uint32 hatSupply = hats.hatSupply(secondHatId);
 
@@ -805,12 +841,6 @@ contract EligibilitySetHatsTests is TestSetup2 {
         assertFalse(hats.isInGoodStanding(secondWearer, secondHatId));
     }
 
-    // TODO: do we need to test the following functionality?
-    // in the MVP, the following call should never happen:
-    //  setHatWearerStatus(secondHatId, secondWearer, false, false);
-    //  i.e. WearerStatus - wearing, in bad standing
-    // in a future state, this call could happen if there were less severe penalities than revocations
-
     function testCannotRevokeHatAsNonWearer() public {
         // expect NotHatEligibility error
         vm.expectRevert(
@@ -820,6 +850,13 @@ contract EligibilitySetHatsTests is TestSetup2 {
         // attempt to setHatWearerStatus as non-wearer
         vm.prank(address(nonWearer));
         hats.setHatWearerStatus(secondHatId, secondWearer, true, false);
+    }
+
+    function testSetStandingForNonWearer() public {
+        vm.prank(address(_eligibility));
+        hats.setHatWearerStatus(secondHatId, nonWearer, true, false);
+
+        assertTrue(hats.badStandings(secondHatId, nonWearer));
     }
 
     function testRemintAfterRevokeHatFromWearerInGoodStanding() public {

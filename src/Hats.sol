@@ -19,7 +19,6 @@ contract Hats is ERC1155, HatsIdUtilities {
                               HATS ERRORS
     //////////////////////////////////////////////////////////////*/
 
-    // QUESTION should we add arguments to any of these errors? See github issue #21
     error NotAdmin(address _user, uint256 _hatId);
     error AllHatsWorn(uint256 _hatId);
     error AlreadyWearingHat(address _wearer, uint256 _hatId);
@@ -34,7 +33,6 @@ contract Hats is ERC1155, HatsIdUtilities {
     error NotIHatsEligibilityContract();
     error BatchArrayLengthMismatch();
     error SafeTransfersNotNecessary();
-    error MaxLevelsReached();
 
     /*//////////////////////////////////////////////////////////////
                               HATS EVENTS
@@ -120,7 +118,6 @@ contract Hats is ERC1155, HatsIdUtilities {
         returns (uint256 topHatId)
     {
         // create hat
-
         topHatId = uint256(++lastTopHatId) << 224;
 
         _createHat(
@@ -183,7 +180,7 @@ contract Hats is ERC1155, HatsIdUtilities {
         address _eligibility,
         address _toggle,
         string memory _imageURI
-    ) public returns (uint256 newHatId) {
+    ) public payable returns (uint256 newHatId) {
         if (uint8(_admin) > 0) {
             revert MaxLevelsReached();
         }
@@ -226,9 +223,9 @@ contract Hats is ERC1155, HatsIdUtilities {
         address[] memory _eligibilityModules,
         address[] memory _toggleModules,
         string[] memory _imageURIs
-    ) public returns (bool) {
+    ) public payable returns (bool) {
         // check if array lengths are the same
-        uint256 length = _admins.length; // save an MLOAD
+        uint256 length = _admins.length; // save MLOADs
 
         bool sameLengths = (length == _details.length &&
             length == _maxSupplies.length &&
@@ -239,7 +236,7 @@ contract Hats is ERC1155, HatsIdUtilities {
         if (!sameLengths) revert BatchArrayLengthMismatch();
 
         // loop through and create each hat
-        for (uint256 i = 0; i < length; ++i) {
+        for (uint256 i = 0; i < length; ) {
             createHat(
                 _admins[i],
                 _details[i],
@@ -248,13 +245,18 @@ contract Hats is ERC1155, HatsIdUtilities {
                 _toggleModules[i],
                 _imageURIs[i]
             );
+
+            unchecked {
+                ++i;
+            }
         }
 
         return true;
     }
 
     function getNextId(uint256 _admin) public view returns (uint256) {
-        uint8 nextHatId = _hats[_admin].lastHatId + 1;
+        uint8 currentId = _hats[_admin].lastHatId;
+        uint8 nextHatId = ++currentId;
         return buildHatId(_admin, nextHatId);
     }
 
@@ -263,7 +265,11 @@ contract Hats is ERC1155, HatsIdUtilities {
     /// @param _hatId The id of the Hat to mint
     /// @param _wearer The address to which the Hat is minted
     /// @return bool Whether the mint succeeded
-    function mintHat(uint256 _hatId, address _wearer) public returns (bool) {
+    function mintHat(uint256 _hatId, address _wearer)
+        public
+        payable
+        returns (bool)
+    {
         Hat memory hat = _hats[_hatId];
         if (hat.maxSupply == 0) revert HatDoesNotExist(_hatId);
 
@@ -287,13 +293,17 @@ contract Hats is ERC1155, HatsIdUtilities {
 
     function batchMintHats(uint256[] memory _hatIds, address[] memory _wearers)
         public
+        payable
         returns (bool)
     {
         uint256 length = _hatIds.length;
         if (length != _wearers.length) revert BatchArrayLengthMismatch();
 
-        for (uint256 i = 0; i < length; ++i) {
+        for (uint256 i = 0; i < length; ) {
             mintHat(_hatIds[i], _wearers[i]);
+            unchecked {
+                ++i;
+            }
         }
 
         return true;
@@ -305,6 +315,7 @@ contract Hats is ERC1155, HatsIdUtilities {
     /// @return bool Whether the status was toggled
     function setHatStatus(uint256 _hatId, bool newStatus)
         external
+        payable
         returns (bool)
     {
         Hat storage hat = _hats[_hatId];
@@ -355,7 +366,7 @@ contract Hats is ERC1155, HatsIdUtilities {
         address _wearer,
         bool _eligible,
         bool _standing
-    ) external returns (bool) {
+    ) external payable returns (bool) {
         Hat memory hat = _hats[_hatId];
 
         if (msg.sender != hat.eligibility) {
@@ -373,6 +384,7 @@ contract Hats is ERC1155, HatsIdUtilities {
     /// @param _wearer The address of the Hat wearer whose status report is being requested
     function checkHatWearerStatus(uint256 _hatId, address _wearer)
         public
+        payable
         returns (bool)
     {
         Hat memory hat = _hats[_hatId];
@@ -403,7 +415,7 @@ contract Hats is ERC1155, HatsIdUtilities {
     /// @notice Stop wearing a hat, aka "renounce" it
     /// @dev Burns the msg.sender's hat
     /// @param _hatId The id of the Hat being renounced
-    function renounceHat(uint256 _hatId) external {
+    function renounceHat(uint256 _hatId) external payable {
         if (!isWearerOfHat(msg.sender, _hatId)) {
             revert NotHatWearer();
         }
@@ -436,11 +448,8 @@ contract Hats is ERC1155, HatsIdUtilities {
         string memory _imageURI
     ) internal returns (Hat memory hat) {
         hat.details = _details;
-
         hat.maxSupply = _maxSupply;
-
         hat.eligibility = _eligibility;
-
         hat.toggle = _toggle;
         hat.imageURI = _imageURI;
         hat.active = true;
@@ -462,7 +471,6 @@ contract Hats is ERC1155, HatsIdUtilities {
         internal
         returns (bool updated)
     {
-        // optimize later
         Hat storage hat = _hats[_hatId];
 
         if (_newStatus != hat.active) {
@@ -486,8 +494,11 @@ contract Hats is ERC1155, HatsIdUtilities {
         bool _eligible,
         bool _standing
     ) internal returns (bool updated) {
-        // always ineligible if in bad standing
-        if (!_eligible || !_standing) {
+        // always ineligible if in bad standing.
+        // but we only attempt to revoke if they have a balance of the hat.
+        // (we have to check balance storage isntead of isWearerOfHat() since the latter checks eligibility, which may have just been set)
+        // this allows standing to be set on non-wearers.
+        if ((!_eligible || !_standing) && (_balanceOf[_wearer][_hatId] > 0)) {
             // revoke the Hat by burning it
             _burn(_wearer, _hatId, 1);
         }
@@ -520,9 +531,17 @@ contract Hats is ERC1155, HatsIdUtilities {
             revert NotHatWearer();
         }
 
+        if (isWearerOfHat(_to, _hatId)) {
+            revert AlreadyWearingHat(_to, _hatId);
+        }
+
         //Adjust balances
-        --_balanceOf[_from][_hatId];
-        ++_balanceOf[_to][_hatId];
+        unchecked {
+            // can't underflow due to the above check
+            --_balanceOf[_from][_hatId];
+            // can't overflow since balance can never be greater than 1
+            ++_balanceOf[_to][_hatId];
+        }
 
         emit TransferSingle(msg.sender, _from, _to, _hatId, 1);
     }
@@ -576,7 +595,7 @@ contract Hats is ERC1155, HatsIdUtilities {
         view
         returns (bool)
     {
-        return (balanceOf(_user, _hatId) >= 1);
+        return (balanceOf(_user, _hatId) > 0);
     }
 
     /// @notice Checks whether a given address serves as the admin of a given Hat
@@ -599,8 +618,9 @@ contract Hats is ERC1155, HatsIdUtilities {
             if (isWearerOfHat(_user, getAdminAtLevel(_hatId, adminHatLevel))) {
                 return true;
             }
-
-            adminHatLevel--;
+            unchecked {
+                --adminHatLevel;
+            }
         }
 
         return isWearerOfHat(_user, getAdminAtLevel(_hatId, 0));
@@ -737,7 +757,7 @@ contract Hats is ERC1155, HatsIdUtilities {
         uint256 level = getHatLevel(_hatId);
 
         // already checked at `level`, so we start the loop at `level - 1`
-        for (uint256 i = level; i > 0; --i) {
+        for (uint256 i = level; i > 0; ) {
             uint256 id = getAdminAtLevel(_hatId, uint8(i - 1));
             hat = _hats[id];
             imageURI = hat.imageURI;
@@ -746,6 +766,10 @@ contract Hats is ERC1155, HatsIdUtilities {
                 // since there are multiple hats with this imageURI at _hatId's level,
                 // we need to use _hatId to disambiguate
                 return string.concat(imageURI, Strings.toString(_hatId));
+            }
+
+            unchecked {
+                --i;
             }
         }
 
@@ -852,10 +876,14 @@ contract Hats is ERC1155, HatsIdUtilities {
         uint256 amount,
         bytes memory data
     ) internal override {
-        _balanceOf[to][id] += amount;
+        unchecked {
+            // cannot overflow since mintHat enforces max balance of 1
+            _balanceOf[to][id] += amount;
 
-        // increment Hat supply counter
-        ++hatSupply[uint256(id)];
+            // increment Hat supply counter
+            // cannot overflow since mintHat checks for max supply
+            ++hatSupply[uint256(id)];
+        }
 
         emit TransferSingle(msg.sender, address(0), to, id, amount);
     }
@@ -870,10 +898,13 @@ contract Hats is ERC1155, HatsIdUtilities {
         uint256 id,
         uint256 amount
     ) internal override {
-        _balanceOf[from][id] -= amount;
+        // these can never overflow since funcs calling _burn explicitly check that `from` has a positive balance of `id`, and `amount` can only ever be 1
+        unchecked {
+            _balanceOf[from][id] -= amount;
 
-        // decrement Hat supply counter
-        --hatSupply[uint256(id)];
+            // decrement Hat supply counter
+            --hatSupply[uint256(id)];
+        }
 
         emit TransferSingle(msg.sender, from, address(0), id, amount);
     }

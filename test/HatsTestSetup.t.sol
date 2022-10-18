@@ -165,12 +165,3 @@ abstract contract TestSetup2 is TestSetup {
         hats.mintHat(secondHatId, secondWearer);
     }
 }
-
-abstract contract TestSetupBatch is TestSetup {
-    function setUp() public override {
-        // expand on TestSetup
-        super.setUp();
-
-        // create empty batch create arrays
-    }
-}
