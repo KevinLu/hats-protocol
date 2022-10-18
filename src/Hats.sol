@@ -2,19 +2,20 @@
 pragma solidity >=0.8.13;
 
 import {ERC1155} from "ERC1155/ERC1155.sol";
-// do we need an interface for Hatter / admin?
-import "forge-std/Test.sol"; //remove after testing
+// import "forge-std/Test.sol"; //remove after testing
 import "./HatsIdUtilities.sol";
 import "./HatsToggle/IHatsToggle.sol";
 import "./HatsEligibility/IHatsEligibility.sol";
 import "@openzeppelin/contracts/utils/Base64.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
+import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 /// @title Hats Protocol
 /// @notice Hats are DAO-native revocable roles that are represented as semi-fungable tokens for composability
 /// @dev This is a multitenant contract that can manage all Hats for a given chain
 /// @author Hats Protocol
-contract Hats is ERC1155, HatsIdUtilities {
+contract Hats is ERC1155, EIP712, HatsIdUtilities {
     /*//////////////////////////////////////////////////////////////
                               HATS ERRORS
     //////////////////////////////////////////////////////////////*/
@@ -82,7 +83,8 @@ contract Hats is ERC1155, HatsIdUtilities {
                               HATS STORAGE
     //////////////////////////////////////////////////////////////*/
 
-    string public name;
+    string public constant name = "Hats Protocol";
+    string public version;
 
     uint32 public lastTopHatId; // initialized at 0
 
@@ -96,12 +98,22 @@ contract Hats is ERC1155, HatsIdUtilities {
     // for external contracts to check if Hat was revoked because the wearer is in bad standing
     mapping(uint256 => mapping(address => bool)) public badStandings; // key: hatId => value: (key: wearer => value: badStanding?)
 
+    bytes32 public constant CREATE_TYPEHASH =
+        keccak256(
+            "CreateHat(uint256 admin,string details,uint32 maxSupply,address eligibility,address toggle,string imageURI)"
+        );
+
+    bytes32 public constant MINT_TYPEHASH =
+        keccak256("MintHat(uint256 hatId,address wearer)");
+
     /*//////////////////////////////////////////////////////////////
                               CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
-    constructor(string memory _name, string memory _baseImageURI) {
-        name = _name;
+    constructor(string memory _version, string memory _baseImageURI)
+        EIP712(name, _version)
+    {
+        version = _version;
         baseImageURI = _baseImageURI;
     }
 
@@ -123,7 +135,7 @@ contract Hats is ERC1155, HatsIdUtilities {
 
         topHatId = uint256(++lastTopHatId) << 224;
 
-        _createHat(
+        __createHat(
             topHatId,
             "", // details
             1, // maxSupply = 1
@@ -167,6 +179,7 @@ contract Hats is ERC1155, HatsIdUtilities {
     }
 
     /// @notice Creates a new hat. The msg.sender must wear the `_admin` hat.
+
     /// @dev Initializes a new Hat struct, but does not mint any tokens.
     /// @param _details A description of the Hat
     /// @param _maxSupply The total instances of the Hat that can be worn at once
@@ -184,6 +197,67 @@ contract Hats is ERC1155, HatsIdUtilities {
         address _toggle,
         string memory _imageURI
     ) public returns (uint256 newHatId) {
+        newHatId = _createHat(
+            msg.sender,
+            _admin,
+            _details,
+            _maxSupply,
+            _eligibility,
+            _toggle,
+            _imageURI
+        );
+    }
+
+    function createHatBySig(
+        uint256 _admin,
+        string calldata _details,
+        uint32 _maxSupply,
+        address _eligibility,
+        address _toggle,
+        string calldata _imageURI,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external returns (uint256 newHatId) {
+        address creator = ECDSA.recover(
+            _hashTypedDataV4(
+                keccak256(
+                    abi.encode(
+                        CREATE_TYPEHASH,
+                        _admin,
+                        _details,
+                        _maxSupply,
+                        _eligibility,
+                        _toggle,
+                        _imageURI
+                    )
+                )
+            ),
+            v,
+            r,
+            s
+        );
+
+        newHatId = _createHat(
+            creator,
+            _admin,
+            _details,
+            _maxSupply,
+            _eligibility,
+            _toggle,
+            _imageURI
+        );
+    }
+
+    function _createHat(
+        address _hatCreator,
+        uint256 _admin,
+        string memory _details, // encode as bytes32 ??
+        uint32 _maxSupply,
+        address _eligibility,
+        address _toggle,
+        string memory _imageURI
+    ) internal returns (uint256 newHatId) {
         if (uint8(_admin) > 0) {
             revert MaxLevelsReached();
         }
@@ -191,12 +265,12 @@ contract Hats is ERC1155, HatsIdUtilities {
         newHatId = getNextId(_admin);
 
         // to create a hat, you must be wearing one of its admin hats
-        if (!isAdminOfHat(msg.sender, newHatId)) {
-            revert NotAdmin(msg.sender, newHatId);
+        if (!isAdminOfHat(_hatCreator, newHatId)) {
+            revert NotAdmin(_hatCreator, newHatId);
         }
 
         // create the new hat
-        _createHat(
+        __createHat(
             newHatId,
             _details,
             _maxSupply,
@@ -264,12 +338,39 @@ contract Hats is ERC1155, HatsIdUtilities {
     /// @param _wearer The address to which the Hat is minted
     /// @return bool Whether the mint succeeded
     function mintHat(uint256 _hatId, address _wearer) public returns (bool) {
+        return _mintHat(msg.sender, _hatId, _wearer);
+    }
+
+    function mintHatBySig(
+        uint256 _hatId,
+        address _wearer,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external returns (bool) {
+        address minter = ECDSA.recover(
+            _hashTypedDataV4(
+                keccak256(abi.encode(MINT_TYPEHASH, _hatId, _wearer))
+            ),
+            v,
+            r,
+            s
+        );
+
+        return _mintHat(minter, _hatId, _wearer);
+    }
+
+    function _mintHat(
+        address _minter,
+        uint256 _hatId,
+        address _wearer
+    ) internal returns (bool) {
         Hat memory hat = _hats[_hatId];
         if (hat.maxSupply == 0) revert HatDoesNotExist(_hatId);
 
         // only the wearer of a hat's admin Hat can mint it
-        if (!isAdminOfHat(msg.sender, _hatId)) {
-            revert NotAdmin(msg.sender, _hatId);
+        if (!isAdminOfHat(_minter, _hatId)) {
+            revert NotAdmin(_minter, _hatId);
         }
 
         if (hatSupply[_hatId] >= hat.maxSupply) {
@@ -427,7 +528,7 @@ contract Hats is ERC1155, HatsIdUtilities {
     /// @param _imageURI The image uri for this top hat and the fallback for its
     ///                  downstream hats [optional]
     /// @return hat The contents of the newly created hat
-    function _createHat(
+    function __createHat(
         uint256 _id,
         string memory _details, // encode as bytes32 ??
         uint32 _maxSupply,

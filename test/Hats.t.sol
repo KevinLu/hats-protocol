@@ -9,6 +9,7 @@ import "@openzeppelin/contracts/utils/Strings.sol";
 contract DeployTest is TestSetup {
     function testDeployWithParams() public {
         assertEq(hats.name(), name);
+        assertEq(hats.version(), version);
     }
 }
 
@@ -71,6 +72,94 @@ contract CreateHatsTest is TestSetup {
         // assert admin's lastHatId is incremented
         (, , , , , , uint8 lastHatIdPost, ) = hats.viewHat(topHatId);
         assertEq(++lastHatId, lastHatIdPost);
+    }
+
+    function testCreateHatBySig() public {
+        // get prelim values
+        (, , , , , , uint8 lastHatId, ) = hats.viewHat(topHatId);
+
+        uint256 topHatWearerPk = pks[0];
+
+        // generate the EIP712 struct hash for createHat
+        bytes32 structHash = keccak256(
+            abi.encode(
+                hats.CREATE_TYPEHASH(),
+                topHatId,
+                _details,
+                _maxSupply,
+                _eligibility,
+                _toggle,
+                secondHatImageURI
+            )
+        );
+
+        // tophat wearer signs the EIP712 struct hash
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(
+            topHatWearerPk,
+            hashTypedDataV4(nameHash, versionHash, address(hats), structHash)
+        );
+
+        // we create a hat on behalf of the tophat wearer
+        hats.createHatBySig(
+            topHatId,
+            _details,
+            _maxSupply,
+            _eligibility,
+            _toggle,
+            secondHatImageURI,
+            v,
+            r,
+            s
+        );
+
+        // assert admin's lastHatId is incremented
+        (, , , , , , uint8 lastHatIdPost, ) = hats.viewHat(topHatId);
+        assertEq(++lastHatId, lastHatIdPost);
+    }
+
+    function testCannotCreateHatBySigFromNonAdmin() public {
+        // create a private key for the wrong wearer
+        uint256 wrongWearerPk = pks[4];
+
+        // generate the EIP712 struct hash for createHat
+        bytes32 structHash = keccak256(
+            abi.encode(
+                hats.CREATE_TYPEHASH(),
+                topHatId,
+                _details,
+                _maxSupply,
+                _eligibility,
+                _toggle,
+                secondHatImageURI
+            )
+        );
+
+        // wrong wearer signs the EIP712 struct hash
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(
+            wrongWearerPk,
+            hashTypedDataV4(nameHash, versionHash, address(hats), structHash)
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Hats.NotAdmin.selector,
+                vm.addr(wrongWearerPk),
+                hats.buildHatId(topHatId, 1) // the would-be new hat id
+            )
+        );
+
+        // we attempt to create a hat on behalf of the wrong tophat wearer
+        hats.createHatBySig(
+            topHatId,
+            _details,
+            _maxSupply,
+            _eligibility,
+            _toggle,
+            secondHatImageURI,
+            v,
+            r,
+            s
+        );
     }
 
     function testHatsBranchCreated() public {
@@ -139,12 +228,6 @@ contract BatchCreateHats is TestSetupBatch {
             hats.buildHatId(topHatId, uint8(count))
         );
         assertEq(t, _toggle);
-    }
-
-    function testTemp() public {
-        hats.getHatLevel(
-            27065671948198289362489238675596178244906309694785829628088330289409
-        );
     }
 
     function testBatchCreateHatsSkinnyFullBranch() public {
@@ -637,6 +720,49 @@ contract MintHatsTest is TestSetup {
         );
 
         hats.batchMintHats(hatBatch, wearerBatch);
+    }
+
+    function testMintHatBySig() public {
+        uint256 topHatWearerPk = pks[0];
+
+        // generate the EIP712 struct hash for mintHat
+        bytes32 structHash = keccak256(
+            abi.encode(hats.MINT_TYPEHASH(), secondHatId, secondWearer)
+        );
+
+        // tophat wearer signs the EIP712 struct hash
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(
+            topHatWearerPk,
+            hashTypedDataV4(nameHash, versionHash, address(hats), structHash)
+        );
+
+        // we create a hat on behalf of the tophat wearer
+        hats.mintHatBySig(secondHatId, secondWearer, v, r, s);
+
+        // assert iswearer
+        assertTrue(hats.isWearerOfHat(secondWearer, secondHatId));
+    }
+
+    function testCannotMintHatBySigFromNonAdmin() public {
+        uint256 wrongWearerPk = pks[4];
+
+        // generate the EIP712 struct hash for mintHat
+        bytes32 structHash = keccak256(
+            abi.encode(hats.MINT_TYPEHASH(), secondHatId, secondWearer)
+        );
+
+        // tophat wearer signs the EIP712 struct hash
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(
+            wrongWearerPk,
+            hashTypedDataV4(nameHash, versionHash, address(hats), structHash)
+        );
+
+        vm.expectRevert(abi.encodeWithSelector(Hats.NotAdmin.selector, vm.addr(wrongWearerPk), secondHatId));
+
+        // we create a hat on behalf of the wrong wearer
+        hats.mintHatBySig(secondHatId, secondWearer, v, r, s);
+
+        
     }
 }
 

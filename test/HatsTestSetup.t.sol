@@ -3,9 +3,13 @@ pragma solidity ^0.8.13;
 
 import "forge-std/Test.sol";
 import "../src/Hats.sol";
+import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
 abstract contract TestVariables {
     Hats hats;
+
+    address[] addresses;
+    uint256[] pks;
 
     address internal topHatWearer;
     address internal secondWearer;
@@ -28,7 +32,10 @@ abstract contract TestVariables {
     uint256 internal secondHatId;
     uint256 internal thirdHatId;
 
-    string internal name;
+    string internal name = "Hats Protocol";
+    string internal version = "Test";
+    bytes32 internal nameHash;
+    bytes32 internal versionHash;
 
     uint256[] adminsBatch;
     string[] detailsBatch;
@@ -62,26 +69,95 @@ abstract contract TestVariables {
     );
 }
 
-abstract contract TestSetup is Test, TestVariables {
+// test utility, drawing from oz EIP712 and ECDSA implementations
+abstract contract EIP712Tests {
+    // EIP712 state
+    bytes32 private immutable _TYPE_HASH =
+        keccak256(
+            "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+        );
+
+    // ECDSA functions
+
+    function _toTypedDataHash(bytes32 domainSeparator, bytes32 structHash)
+        internal
+        pure
+        returns (bytes32)
+    {
+        return
+            keccak256(
+                abi.encodePacked("\x19\x01", domainSeparator, structHash)
+            );
+    }
+
+    // EIP712 functions
+
+    function _buildDomainSeparator(
+        bytes32 nameHash,
+        bytes32 versionHash,
+        address thisContract
+    ) private view returns (bytes32) {
+        return
+            keccak256(
+                abi.encode(
+                    _TYPE_HASH,
+                    nameHash,
+                    versionHash,
+                    block.chainid,
+                    thisContract
+                )
+            );
+    }
+
+    function hashTypedDataV4(
+        bytes32 nameHash,
+        bytes32 versionHash,
+        address thisContract,
+        bytes32 structHash
+    ) public view virtual returns (bytes32) {
+        return
+            _toTypedDataHash(
+                _buildDomainSeparator(nameHash, versionHash, thisContract),
+                structHash
+            );
+    }
+}
+
+abstract contract TestSetup is Test, TestVariables, EIP712Tests {
     function setUp() public virtual {
         setUpVariables();
         // instantiate Hats contract
-        hats = new Hats(name, _baseImageURI);
+        hats = new Hats(version, _baseImageURI);
 
         // create TopHat
         createTopHat();
+    }
+
+    function createAddressesFromPks(uint256 count)
+        public
+        returns (uint256[] memory pks_, address[] memory addresses_)
+    {
+        pks_ = new uint256[](count);
+        addresses_ = new address[](count);
+
+        for (uint256 i = 0; i < count; ++i) {
+            pks_[i] = 100 * (i + 1);
+            addresses_[i] = vm.addr(pks_[i]);
+        }
     }
 
     function setUpVariables() internal {
         // set variables: deploy
         _baseImageURI = "https://www.images.hats.work/";
 
+        (pks, addresses) = createAddressesFromPks(5);
+
         // set variables: addresses
-        topHatWearer = address(1);
-        secondWearer = address(2);
-        thirdWearer = address(3);
-        fourthWearer = address(4);
-        nonWearer = address(100);
+        topHatWearer = addresses[0];
+        secondWearer = addresses[1];
+        thirdWearer = addresses[2];
+        fourthWearer = addresses[3];
+        nonWearer = addresses[4];
 
         // set variables: Hat parameters
         _maxSupply = 1;
@@ -92,7 +168,10 @@ abstract contract TestSetup is Test, TestVariables {
         secondHatImageURI = "http://www.second.com/";
         thirdHatImageURI = "http://www.third.com/";
 
-        name = "Hats Test Contract";
+        name = "Hats Protocol";
+        version = "Test";
+        nameHash = keccak256(bytes(name));
+        versionHash = keccak256(bytes(version));
     }
 
     function createTopHat() internal {
