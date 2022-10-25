@@ -36,6 +36,8 @@ contract Hats is ERC1155, EIP712, HatsIdUtilities {
     error BatchArrayLengthMismatch();
     error SafeTransfersNotNecessary();
     error MaxLevelsReached();
+    error SigExpired();
+    error InvalidNonce();
 
     /*//////////////////////////////////////////////////////////////
                               HATS EVENTS
@@ -100,11 +102,16 @@ contract Hats is ERC1155, EIP712, HatsIdUtilities {
 
     bytes32 public constant CREATE_TYPEHASH =
         keccak256(
-            "CreateHat(uint256 admin,string details,uint32 maxSupply,address eligibility,address toggle,string imageURI)"
+            "CreateHat(uint256 admin,string details,uint32 maxSupply,address eligibility,address toggle,string imageURI,uint256 expiry,uint256 nonce)"
         );
 
     bytes32 public constant MINT_TYPEHASH =
-        keccak256("MintHat(uint256 hatId,address wearer)");
+        keccak256(
+            "MintHat(uint256 hatId,address wearer,uint256 expiry,uint256 nonce)"
+        );
+
+    mapping(address => uint256) public createNonces; // key: creator => value: nonce
+    mapping(address => uint256) public mintNonces; // key: minter => value: nonce
 
     /*//////////////////////////////////////////////////////////////
                               CONSTRUCTOR
@@ -215,10 +222,14 @@ contract Hats is ERC1155, EIP712, HatsIdUtilities {
         address _eligibility,
         address _toggle,
         string calldata _imageURI,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
+        uint8 _v,
+        bytes32 _r,
+        bytes32 _s,
+        uint256 _expiry,
+        uint256 _nonce
     ) external returns (uint256 newHatId) {
+        if (_expiry > 0 && _expiry < block.timestamp) revert SigExpired();
+
         address creator = ECDSA.recover(
             _hashTypedDataV4(
                 keccak256(
@@ -229,14 +240,18 @@ contract Hats is ERC1155, EIP712, HatsIdUtilities {
                         _maxSupply,
                         _eligibility,
                         _toggle,
-                        _imageURI
+                        _imageURI,
+                        _expiry,
+                        _nonce
                     )
                 )
             ),
-            v,
-            r,
-            s
+            _v,
+            _r,
+            _s
         );
+
+        if (_nonce > ++createNonces[creator]) revert InvalidNonce();
 
         newHatId = _createHat(
             creator,
@@ -344,18 +359,24 @@ contract Hats is ERC1155, EIP712, HatsIdUtilities {
     function mintHatBySig(
         uint256 _hatId,
         address _wearer,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
+        uint8 _v,
+        bytes32 _r,
+        bytes32 _s,
+        uint256 _expiry,
+        uint256 _nonce
     ) external returns (bool) {
+        if (_expiry > 0 && _expiry < block.timestamp) revert SigExpired();
+
         address minter = ECDSA.recover(
             _hashTypedDataV4(
                 keccak256(abi.encode(MINT_TYPEHASH, _hatId, _wearer))
             ),
-            v,
-            r,
-            s
+            _v,
+            _r,
+            _s
         );
+
+        if (_nonce > ++mintNonces[minter]) revert InvalidNonce();
 
         return _mintHat(minter, _hatId, _wearer);
     }

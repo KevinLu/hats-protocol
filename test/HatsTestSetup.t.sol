@@ -36,6 +36,8 @@ abstract contract TestVariables {
     string internal version = "Test";
     bytes32 internal nameHash;
     bytes32 internal versionHash;
+    uint256 internal expiry;
+    uint256 internal nonce;
 
     uint256[] adminsBatch;
     string[] detailsBatch;

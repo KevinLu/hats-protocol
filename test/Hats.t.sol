@@ -79,6 +79,8 @@ contract CreateHatsTest is TestSetup {
         (, , , , , , uint8 lastHatId, ) = hats.viewHat(topHatId);
 
         uint256 topHatWearerPk = pks[0];
+        expiry = block.timestamp + 1000000;
+        nonce = 1;
 
         // generate the EIP712 struct hash for createHat
         bytes32 structHash = keccak256(
@@ -89,7 +91,9 @@ contract CreateHatsTest is TestSetup {
                 _maxSupply,
                 _eligibility,
                 _toggle,
-                secondHatImageURI
+                secondHatImageURI,
+                expiry,
+                nonce
             )
         );
 
@@ -109,7 +113,9 @@ contract CreateHatsTest is TestSetup {
             secondHatImageURI,
             v,
             r,
-            s
+            s,
+            expiry,
+            nonce
         );
 
         // assert admin's lastHatId is incremented
@@ -121,6 +127,9 @@ contract CreateHatsTest is TestSetup {
         // create a private key for the wrong wearer
         uint256 wrongWearerPk = pks[4];
 
+        expiry = block.timestamp + 1000000;
+        nonce = 1;
+
         // generate the EIP712 struct hash for createHat
         bytes32 structHash = keccak256(
             abi.encode(
@@ -130,7 +139,9 @@ contract CreateHatsTest is TestSetup {
                 _maxSupply,
                 _eligibility,
                 _toggle,
-                secondHatImageURI
+                secondHatImageURI,
+                expiry,
+                nonce
             )
         );
 
@@ -158,9 +169,15 @@ contract CreateHatsTest is TestSetup {
             secondHatImageURI,
             v,
             r,
-            s
+            s,
+            expiry,
+            nonce
         );
     }
+
+    // function testCannotCreateHatBySigAFterExpiry() public {}
+
+    // function testCannotCreateHatBySigWithInvalidNonce() public {}
 
     function testHatsBranchCreated() public {
         // mint TopHat
@@ -725,9 +742,18 @@ contract MintHatsTest is TestSetup {
     function testMintHatBySig() public {
         uint256 topHatWearerPk = pks[0];
 
+        expiry = block.timestamp + 1000000;
+        nonce = 1;
+
         // generate the EIP712 struct hash for mintHat
         bytes32 structHash = keccak256(
-            abi.encode(hats.MINT_TYPEHASH(), secondHatId, secondWearer)
+            abi.encode(
+                hats.MINT_TYPEHASH(),
+                secondHatId,
+                secondWearer,
+                expiry,
+                nonce
+            )
         );
 
         // tophat wearer signs the EIP712 struct hash
@@ -737,7 +763,7 @@ contract MintHatsTest is TestSetup {
         );
 
         // we create a hat on behalf of the tophat wearer
-        hats.mintHatBySig(secondHatId, secondWearer, v, r, s);
+        hats.mintHatBySig(secondHatId, secondWearer, v, r, s, expiry, nonce);
 
         // assert iswearer
         assertTrue(hats.isWearerOfHat(secondWearer, secondHatId));
@@ -746,9 +772,18 @@ contract MintHatsTest is TestSetup {
     function testCannotMintHatBySigFromNonAdmin() public {
         uint256 wrongWearerPk = pks[4];
 
+        expiry = block.timestamp + 1000000;
+        nonce = 1;
+
         // generate the EIP712 struct hash for mintHat
         bytes32 structHash = keccak256(
-            abi.encode(hats.MINT_TYPEHASH(), secondHatId, secondWearer)
+            abi.encode(
+                hats.MINT_TYPEHASH(),
+                secondHatId,
+                secondWearer,
+                expiry,
+                nonce
+            )
         );
 
         // tophat wearer signs the EIP712 struct hash
@@ -757,12 +792,16 @@ contract MintHatsTest is TestSetup {
             hashTypedDataV4(nameHash, versionHash, address(hats), structHash)
         );
 
-        vm.expectRevert(abi.encodeWithSelector(Hats.NotAdmin.selector, vm.addr(wrongWearerPk), secondHatId));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Hats.NotAdmin.selector,
+                vm.addr(wrongWearerPk),
+                secondHatId
+            )
+        );
 
         // we create a hat on behalf of the wrong wearer
-        hats.mintHatBySig(secondHatId, secondWearer, v, r, s);
-
-        
+        hats.mintHatBySig(secondHatId, secondWearer, v, r, s, expiry, nonce);
     }
 }
 
