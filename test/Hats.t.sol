@@ -1147,3 +1147,42 @@ contract OverridesHatTests is TestSetup2 {
         console2.log("encoded URI", jsonUri);
     }
 }
+
+contract HatsWearingHatsTests is TestSetup2 {
+    function testHatIdToAddress() public {
+        uint256 id = 53919893334301279589334030174039261347274288845081144962207220498432;
+        address out = hats.hatIdToAddress(id);
+
+        emit log_bytes32(keccak256(abi.encodePacked(id)));
+        emit log_address(out);
+    }
+
+    function testBalanceOfByPath1() public {
+        path.push(secondHatId);
+
+        assertTrue(hats.balanceOfByPath(secondWearer, path) == 1);
+    }
+
+    function testBalanceOfByPath2() public {
+        vm.prank(topHatWearer);
+        thirdHatId = hats.createHat(
+            topHatId,
+            "third hat",
+            3, // maxSupply
+            _eligibility,
+            _toggle,
+            secondHatImageURI
+        );
+
+        address secondHatAddress = hats.hatIdToAddress(secondHatId);
+
+        vm.prank(topHatWearer);
+        hats.mintHat(thirdHatId, secondHatAddress);
+
+        path.push(secondHatId);
+        path.push(thirdHatId);
+
+        assertTrue(hats.isWearerOfHat(secondHatAddress, thirdHatId));
+        assertTrue(hats.balanceOfByPath(topHatWearer, path) == 1);
+    }
+}

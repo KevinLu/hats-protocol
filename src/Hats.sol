@@ -712,6 +712,30 @@ contract Hats is ERC1155, HatsIdUtilities {
         return _isEligible(_wearer, hat, _hatId);
     }
 
+    function balanceOfByPath(address _wearer, uint256[] memory _path)
+        public
+        view
+        returns (uint256 balance)
+    {
+        uint256 pathLength = _path.length;
+
+        if (pathLength == 1) return balanceOf(_wearer, _path[0]);
+
+        uint256 currentHat;
+        address currentWearer;
+
+        for (uint256 i = pathLength; i > 0; --i) {
+            currentHat = _path[i - 1];
+            currentWearer = hatIdToAddress(_path[i - 2]);
+            balance += balanceOf(currentWearer, currentHat);
+            if (balance == 1) break;
+        }
+    }
+
+    function hatIdToAddress(uint256 _hatId) public pure returns (address) {
+        return address(uint160(uint256(keccak256(abi.encodePacked(_hatId)))));
+    }
+
     /// @notice Gets the imageURI for a given hat
     /// @dev If this hat does not have an imageURI set, recursively get the imageURI from
     ///      its admin

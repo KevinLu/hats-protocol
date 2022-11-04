@@ -37,6 +37,8 @@ abstract contract TestVariables {
     address[] toggleModulesBatch;
     string[] imageURIsBatch;
 
+    uint256[] path;
+
     event HatCreated(
         uint256 id,
         string details,
